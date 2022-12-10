@@ -1,0 +1,111 @@
+
+'''
+What: Bleak Tutorial
+Where: https://create.arduino.cc/projecthub/sridhar-rajagopal/control-arduino-nano-ble-with-bluetooth-python-331e33
+Why: Noble isn't working for Bluetooth package. Needed to use Bleak instead and found this tutorial.
+'''
+
+import time
+import struct
+import logging
+import platform
+import ast
+
+import asyncio
+import multiprocessing as mp
+
+import pandas as pd
+import matplotlib.pyplot as plt
+from matplotlib.animation import FuncAnimation
+
+from bleak import BleakScanner
+from bleak import BleakClient
+from bleak import discover
+
+# Define BLE Characteristics
+BLE_DEVICE_NAME = 'ZSR_Nano33Iot'
+BLE_UUID_ACCELEROMETER_SERVICE = '00001101-0000-1000-8000-00805F9B34fB'
+BLE_UUID_ACCELEROMETER_X = '00002101-0000-1000-8000-00805F9B34FB'
+BLE_UUID_ACCELEROMETER_Y = '00002102-0000-1000-8000-00805F9B34FB'
+BLE_UUID_ACCELEROMETER_Z = '00002103-0000-1000-8000-00805F9B34FB'
+
+
+# Function Definitions
+
+async def connect_to_BLE_peripheral(ns) :
+    address = None
+    notFoundZSRNano = True
+    while notFoundZSRNano :
+        print(' Scanning list of availble Bluetooth devices for ZSR_Nano33IoT... ')
+        devices = await BleakScanner.discover()
+        for d in devices :
+            if d.name == BLE_DEVICE_NAME :
+                address = str(d.address) # store address of peripheral
+                notFoundZSRNano = False
+                print('BLE Connection established')
+                break
+        if address != None :
+            break
+        time.sleep(3) # seconds
+
+    async with BleakClient(address) as client :
+
+        # Zeroize all IMU values
+        ax_raw = 0
+        ay_raw = 0
+        az_raw = 0
+        ax = 0
+        ay = 0
+        az = 0
+
+        # Read real-time IMU values
+        readIMUValues = True
+        while readIMUValues :
+            # Read raw byte values and convert to float
+            ax_raw = await client.read_gatt_char(BLE_UUID_ACCELEROMETER_X)
+            ax = struct.unpack('<f', ax_raw)[0]
+
+            # Initialize dataframe dataframe
+            data = {'time': [time.time()], 'ax': [ax]}
+            row = pd.DataFrame(data)
+
+            # Append row to dataframe
+            ns.df = pd.concat([ns.df, row], ignore_index=True)
+            ns.df.reset_index()
+
+            await asyncio.sleep(0.5) # seconds
+
+
+def update_plot(interval, ns):
+    #Plot Accerlation_X Data
+    time = ns.df.loc[:,'time']
+    ax = ns.df.loc[:,'ax']
+
+    # Plot Properties
+    plt.cla() 
+    plt.plot(time, ax, label = 'acceleration_x')
+    plt.legend(loc = 'upper center')
+    plt.xlabel('Time (sec)')
+    plt.ylabel('Acceleration (g)')
+    plt.grid()
+
+def animate(ns):
+    ani = FuncAnimation(plt.gcf(), update_plot, fargs = (ns,), interval = 500) # ms
+    plt.show()
+
+
+# Run Main #####################################################################
+if __name__ == '__main__':
+
+    # Initialize Multiprocessing
+    manager = mp.Manager()
+
+    # Initialize Data namespace
+    ns = manager.Namespace()
+    ns.df = pd.DataFrame(columns = ['time', 'ax'])
+
+    # Multiprocessing
+    p = mp.Process(target = animate, args = (ns,))
+    p.start()
+    asyncio.run(connect_to_BLE_peripheral(ns))
+    p.join()
